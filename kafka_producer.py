@@ -11,9 +11,11 @@ from datetime import datetime
 from datetime import timedelta
 from math import floor
 import binascii
+import base64
+import sys
 
 db_name = 'producer_config.db'
-version = '2'
+version = '4'
 
 class SqlliteConn(): 
     def __init__(self, db_name): 
@@ -98,6 +100,12 @@ class About:
         self.tp.destroy()
 
 class ProducerUI:
+    def base64_encoding_checked(self):
+        if self.type_base64.get()==1:
+            self.type_hex.set(0)
+    def hex_encoding_checked(self):
+        if self.type_hex.get()==1:
+            self.type_base64.set(0)
     def __init__(self, tab, root) -> None:
         self.message_timestamp = None
         self.outtxt_index = 0
@@ -118,7 +126,7 @@ class ProducerUI:
         self.topic.grid(row=0, column=0, sticky=N+W+E)
         topic_label.grid(row=1, column=0, padx=5, sticky=N+W+E)
         topic_label.columnconfigure(0, weight=1)
-
+        
         key_label = LabelFrame(buttons_frame, text='Key', padding='2 2 2 2')
         self.key = Combobox(key_label)
         self.key.grid(row=0, column=0, sticky=N+W+E)
@@ -131,6 +139,25 @@ class ProducerUI:
         nosave_send_button = Button(send_buttons_frame, text='Send', command= lambda: self.send(False))
         nosave_send_button.grid(row=0, column=1, sticky=S+W)
         send_buttons_frame.grid(row=2, column=1, sticky=S+W)
+        
+        checkboxes_frame = LabelFrame(buttons_frame, text='Message encoding', padding='2 2 2 2')
+        self.type_base64 = IntVar()
+        self.type_hex = IntVar()
+        is_type_hex = Checkbutton(checkboxes_frame, text='Hex Encoded', variable=self.type_hex, command=self.hex_encoding_checked)
+        is_type_base64 = Checkbutton(checkboxes_frame, text='Base64 Encoded', variable=self.type_base64, command=self.base64_encoding_checked)
+        is_type_hex.grid(row=0, column=0, sticky=S+W)
+        is_type_base64.grid(row=0, column=1, sticky=S+W)
+        checkboxes_frame.grid(row=3, column=0, padx=5, sticky=N+W+E)
+        
+        #partition_label = LabelFrame(topic_label, text='Partition', padding='2 2 2 2')
+        partition_label = Label(topic_label, text='Partition', padding='2 2 2 2')
+        partition_label.grid(row=0, column=1, sticky=N+W+E)
+        self.partition = Combobox(topic_label)
+        self.partition.grid(row=0, column=2, sticky=N+W+E)
+        self.partition['values'] = ['auto']
+        self.partition.current(0)
+        #partition_label.grid(row=0, column=1, padx=5, sticky=N+W+E)
+        #partition_label.columnconfigure(1, weight=2)
 
         buttons_frame.grid(row=0, column=0, sticky=N+W+E+S)
         buttons_frame.columnconfigure(0, weight=1)
@@ -181,7 +208,7 @@ class ProducerUI:
         tab.columnconfigure(0, weight=1)
         self.update_lists()
         self.update_message()
-    def send_to_kafka(self, servers, topic, key, value :str, outtxt: Text):
+    def send_to_kafka(self, servers, topic, partition, key, value :str, outtxt: Text):
         tag = 'odd'
         if self.outtxt_index % 2 == 0:
             tag = 'even'
@@ -189,29 +216,48 @@ class ProducerUI:
         out_str = ''
         try:
             producer = KafkaProducer(bootstrap_servers=servers)
-            if(str(value).startswith('0x')):
-                value = value[2:]
+            if self.type_hex.get() == 1:
                 _value = binascii.unhexlify(value)
+            elif self.type_base64.get() == 1:
+                _value = base64.b64decode(value)
             else:
                 _value = str(value).encode('utf-8')
-            producer.send(topic, key=str(key).encode('utf-8'), value=_value)
-            out_str = str(datetime.now()) + ': ' + 'Message sent' + '\n'
+            result = producer.send(topic, key=str(key).encode('utf-8'), value=_value, partition=partition)
+            sent_partition = str(result.get().partition)
+            out_str = str(datetime.now()) + ': ' + 'Message sent to partition: ' + sent_partition + '\n'
             producer.close()
         except NoBrokersAvailable as e:
             out_str = str(datetime.now()) + ': ' + str(e) + '\n'
         except KafkaTimeoutError as e:
             out_str = str(datetime.now()) + ': ' + str(e) + '\n'
+        except:
+            out_str = str(datetime.now()) + ': ' + str(sys.exc_info()[1]) + '\n'
         start_txt_index = float(outtxt.index(END)) - 1
         end_txt_index = str(floor(start_txt_index)) + '.' + str(len(out_str))
         outtxt.insert(END, out_str)
         outtxt.tag_add(tag, start_txt_index, end_txt_index)
         outtxt.see(END)
         
+    def num(self, s):
+        try:
+            return int(s)
+        except ValueError:
+            return None
+    
+    def sanitize_partition(self, partition: str):
+        if partition == 'auto':
+            return None
+        partition_int = self.num(partition)
+        if partition_int is None or partition_int < 0:
+            return None
+        return partition_int
+    
     def send(self, save=True):
         _broker = str(self.servers.get()).strip()
         _topic = str(self.topic.get()).strip()
         _key = str(self.key.get()).strip()
         _value = str(self.value.get('1.0', 'end-1c')).strip()
+        _partition = str(self.partition.get()).strip()
         if len(_broker) == 0 or len(_topic) == 0 or len(_value) == 0 or len(_key) == 0:
             messagebox.showwarning(title='Fields required',message='Broker, topic, key and message fields are required')
             return
@@ -231,7 +277,7 @@ class ProducerUI:
                 dt = datetime.strptime(self.message_timestamp, '%Y-%m-%d %H:%M:%S')
             self.message_timestamp = (dt + timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
         if len(_broker)>0 and len(_topic)>0 and len(_key)>0 and len(_value)>0:
-            self.send_to_kafka(_broker, _topic, _key, _value, self.outtxt)
+            self.send_to_kafka(_broker, _topic, self.sanitize_partition(_partition), _key, _value, self.outtxt)
 
     def update_lists(self):
         self.servers['values'] = get_list('brokers')
