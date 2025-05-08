@@ -1,2 +1,2 @@
-kafka-python==2.0.1
+kafka-python==2.2.4
 xmlformatter==0.1.1
