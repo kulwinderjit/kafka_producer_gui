@@ -248,6 +248,8 @@ class ProducerUI:
         self.outtxt['yscrollcommand'] = scrollb.set
         self.outtxt.grid(row=0, column=0, sticky=NSEW)
         scrollb.grid(row=0, column=1, sticky=NS)
+        self.outtxt.tag_configure('odd', background='white', foreground='black')
+        self.outtxt.tag_configure('even', background='grey', foreground='white')
         outtxt_label.columnconfigure(0, weight=1)
         outtxt_label.rowconfigure(0, weight=1)
 
