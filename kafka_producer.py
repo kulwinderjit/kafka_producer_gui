@@ -18,7 +18,7 @@ import sys
 import struct
 
 db_name = 'producer_config.db'
-version = '5'
+version = '6'
 
 class SqlliteConn(): 
     def __init__(self, db_name): 
